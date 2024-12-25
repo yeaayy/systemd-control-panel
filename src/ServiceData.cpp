@@ -1,0 +1,185 @@
+#define __USE_POSIX2
+
+#include "ServiceData.h"
+
+#include <unistd.h>
+
+#include <cstdio>
+#include <iostream>
+#include <ostream>
+#include <sstream>
+#include <string>
+
+#include "constant.h"
+#include "utils.h"
+
+std::ostream& operator<<(std::ostream& out, ServiceStatus status)
+{
+    switch (status) {
+        case ServiceStatus::UNKNOWN:
+            return out << "UNKNOWN";
+        case ServiceStatus::RUNNING:
+            return out << "RUNNING";
+        case ServiceStatus::STOPPED:
+        return out << "STOPPED";
+        default:
+            return out << "(Unknown status)";
+    }
+}
+
+ServiceData::ServiceData(const char* _ipc, std::string name)
+    : status(ServiceStatus::UNKNOWN)
+    , enabled(false)
+    , name(name)
+    , ipc(_ipc)
+{}
+
+void
+ServiceData::update()
+{
+    std::stringstream ss;
+    ss << SERVICE_DIR << name << " status";
+    std::string command = ss.str();
+
+    FILE *process = popen(command.c_str(), "r");
+    if (!process) {
+        status = ServiceStatus::UNKNOWN;
+        return;
+    }
+
+    ss.seekp(0);
+    char buff[BUFSIZ];
+    int readed;
+    while((readed = fread(buff, 1, BUFSIZ, process))) {
+        ss.write(buff, readed);
+    }
+
+    log = ss.str();
+    pclose(process);
+
+    check_active();
+    check_loaded();
+}
+
+void
+ServiceData::check_active()
+{
+    size_t start = log.find("Active: ");
+    size_t end;
+    if (start == std::string::npos) goto unknown;
+    start += 8;
+
+    end = log.find(" ", start);
+    if (end == std::string::npos) goto unknown;
+
+    set_status(
+        log.substr(start, end - start) == "active"
+        ? ServiceStatus::RUNNING
+        : ServiceStatus::STOPPED
+    );
+    return;
+
+unknown:
+    set_status(ServiceStatus::UNKNOWN);
+}
+
+void
+ServiceData::check_loaded()
+{
+    size_t start = log.find("Loaded:");
+    size_t end;
+
+    if (start == std::string::npos) goto not_found;
+    start = log.find("; ", start);
+    if (start == std::string::npos) goto not_found;
+    start += 2;
+
+    end = log.find("; ", start);
+    if (end == std::string::npos) goto not_found;
+
+    set_enabled(log.substr(start, end - start) == "enabled");
+    return;
+
+    not_found:
+    set_enabled(false);
+}
+
+std::string
+ServiceData::get_name()
+{
+    return name;
+}
+
+ServiceStatus
+ServiceData::get_status()
+{
+    return status;
+}
+
+bool
+ServiceData::is_enabled()
+{
+    return enabled;
+}
+
+void
+ServiceData::set_status(ServiceStatus status)
+{
+    if (this->status == status) return;
+
+    this->status = status;
+    status_changed.emit(status);
+}
+
+void
+ServiceData::set_enabled(bool enabled)
+{
+    if (this->enabled == enabled) return;
+
+    this->enabled = enabled;
+    enabled_changed.emit(enabled);
+}
+
+sigc::signal<void, ServiceStatus>&
+ServiceData::signal_status_changed()
+{
+    return status_changed;
+}
+
+sigc::signal<void, bool>&
+ServiceData::signal_enabled_changed()
+{
+    return enabled_changed;
+}
+
+void
+ServiceData::enable()
+{
+    std::string cmd = "systemctl enable " + name;
+    send_command(ipc, cmd.c_str());
+    update();
+}
+
+void
+ServiceData::disable()
+{
+    std::string cmd = "systemctl disable " + name;
+    send_command(ipc, cmd.c_str());
+    update();
+}
+
+void
+ServiceData::start()
+{
+    std::string cmd = "systemctl start " + name;
+    send_command(ipc, cmd.c_str());
+    update();
+}
+
+void
+ServiceData::stop()
+{
+    std::string cmd = "systemctl stop " + name;
+    send_command(ipc, cmd.c_str());
+    update();
+}
