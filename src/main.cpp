@@ -1,8 +1,8 @@
 #include "ControlPanelWindow.h"
 
-#include <algorithm>
-#include <unistd.h>
+#include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,20 +11,19 @@
 #include <future>
 #include <iostream>
 #include <sstream>
-#include <thread>
+#include <vector>
 
 #include <glibmm/error.h>
 #include <glibmm/optioncontext.h>
 #include <glibmm/optionentry.h>
 #include <glibmm/optiongroup.h>
-#include <vector>
 
 #include "constant.h"
 #include "glib.h"
 #include "utils.h"
 
 int
-monitor(const char *target)
+monitor(const char* in, const char* out)
 {
     if (getuid() != 0) {
         std::cerr << "Monitor mode must be run as root\n";
@@ -34,27 +33,29 @@ monitor(const char *target)
     FILE* file;
     char buff[BUFSIZ];
 
-    send_message(target, "start\n");
+    send_message(out, "start\n");
 
     while (true) {
-        file = fopen(target, "r+");
+        file = fopen(in, "r");
         if (!file) return 0;
         char *cmd = fgets(buff, BUFSIZ, file);
         fclose(file);
 
+#ifndef NDEBUG
         std::cout << "Running: " << cmd;
+#endif
         if (strcmp(cmd, "exit\n") == 0) return 0;
         system(cmd);
-        send_message(target, "done\n");
+        send_message(out, "done\n");
     }
     return 0;
 }
 
 void
-run_monitor(int argc, char** argv, const char* target, std::promise<bool>* promise)
+run_monitor(int argc, char** argv, const char* in, const char* out, std::promise<bool>* promise)
 {
     std::stringstream ss;
-    ss << "pkexec " << argv[0] << " --monitor=" << target;
+    ss << "pkexec " << argv[0] << " monitor " << in << " " << out;
     for (int i = 1; i < argc; i++) {
         ss << " " << argv[i];
     }
@@ -114,55 +115,67 @@ write_service_list(std::vector<std::string>& list, std::string& config_path)
         fwrite(service.c_str(), service.size(), 1, file);
         fputc('\n', file);
     }
+    fclose(file);
+}
+
+bool
+create_fifo(const char* path)
+{
+    if (access(path, F_OK) == 0) {
+        if (remove(path)) {
+            perror("remove");
+            return false;
+        }
+    }
+    if (mkfifo(path, 0777) != 0) {
+        perror("mkfifo");
+        return false;
+    }
+    return true;
 }
 
 int
 main(int argc, char *argv[])
 {
-    if (argc > 1 && strncmp(argv[1], "--monitor=", 10) == 0) {
-        return monitor(&argv[1][10]);
+    if (argc == 4 && strcmp(argv[1], "monitor") == 0) {
+        return monitor(argv[2], argv[3]);
     }
 
-    std::stringstream ss;
-    ss << g_get_user_data_dir() << "/" DATA_DIR_NAME;
-    std::string s_tmpfile = ss.str();
-    const char* tmpfile = s_tmpfile.c_str();
-    if (access(tmpfile, F_OK) != 0) {
-        mkdir(tmpfile, 0700);
+    std::string data_dir = std::string(g_get_user_data_dir()) + "/" DATA_DIR_NAME;
+    if (access(data_dir.c_str(), F_OK) != 0) {
+        mkdir(data_dir.c_str(), 0700);
     }
 
-    std::string config_path = s_tmpfile + "/" CONFIG_NAME;
+    auto config_path = data_dir + "/" CONFIG_NAME;
+    auto fifo1 = data_dir + "/fifo1";
+    auto fifo2 = data_dir + "/fifo2";
+    auto c_fifo1 = fifo1.c_str();
+    auto c_fifo2 = fifo2.c_str();
 
-    ss << "/ipc";
-    s_tmpfile = ss.str();
-    tmpfile = s_tmpfile.c_str();
-    if (access(tmpfile, F_OK) == 0) {
-        remove(tmpfile);
-    }
-    if (mkfifo(tmpfile, 0777) != 0) {
-        perror("mkfifo");
+    if (!create_fifo(c_fifo1) || !create_fifo(c_fifo2)) {
         return 1;
     }
 
     std::promise<bool> promise;
     auto future = promise.get_future();
-    std::thread monitor_thread(run_monitor, argc, argv, tmpfile, &promise);
-    std::thread wait_monitor(wait_monitor_started, tmpfile, &promise);
+    std::thread monitor_thread(run_monitor, argc, argv, c_fifo2, c_fifo1, &promise);
+    std::thread wait_monitor(wait_monitor_started, c_fifo1, &promise);
 
     future.wait();
     int result = 1;
     if (future.get()) {
         auto app = Gtk::Application::create(argc, argv, APP_ID);
-        ControlPanelWindow win(tmpfile, read_service_list(config_path));
+        ControlPanelWindow win(fifo1.c_str(), fifo2.c_str(), read_service_list(config_path));
         win.signal_list_changed().connect(
             sigc::bind(sigc::ptr_fun(write_service_list), config_path));
         result = app->run(win);
-        send_message(tmpfile, "exit\n");
+        send_message(c_fifo2, "exit\n");
     } else {
-        send_message(tmpfile, "no_perm\n");
+        send_message(c_fifo1, "no_perm");
     }
     wait_monitor.join();
     monitor_thread.join();
-    remove(tmpfile);
+    remove(c_fifo1);
+    remove(c_fifo2);
     return result;
 }

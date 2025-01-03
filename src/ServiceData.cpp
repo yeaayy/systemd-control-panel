@@ -5,12 +5,12 @@
 #include <unistd.h>
 
 #include <cstdio>
+
 #include <iostream>
 #include <ostream>
 #include <sstream>
 #include <string>
 
-#include "constant.h"
 #include "utils.h"
 
 std::ostream& operator<<(std::ostream& out, ServiceStatus status)
@@ -27,18 +27,19 @@ std::ostream& operator<<(std::ostream& out, ServiceStatus status)
     }
 }
 
-ServiceData::ServiceData(const char* _ipc, std::string name)
+ServiceData::ServiceData(const char* _fifo_in, const char* _fifo_out, std::string name)
     : status(ServiceStatus::UNKNOWN)
     , enabled(false)
     , name(name)
-    , ipc(_ipc)
+    , fifo_in(_fifo_in)
+    , fifo_out(_fifo_out)
 {}
 
 void
 ServiceData::update()
 {
     std::stringstream ss;
-    ss << SERVICE_DIR << name << " status";
+    ss << "systemctl status " << name;
     std::string command = ss.str();
 
     FILE *process = popen(command.c_str(), "r");
@@ -156,7 +157,7 @@ void
 ServiceData::enable()
 {
     std::string cmd = "systemctl enable " + name;
-    send_command(ipc, cmd.c_str());
+    send_command(fifo_in, fifo_out, cmd.c_str());
     update();
 }
 
@@ -164,7 +165,7 @@ void
 ServiceData::disable()
 {
     std::string cmd = "systemctl disable " + name;
-    send_command(ipc, cmd.c_str());
+    send_command(fifo_in, fifo_out, cmd.c_str());
     update();
 }
 
@@ -172,7 +173,7 @@ void
 ServiceData::start()
 {
     std::string cmd = "systemctl start " + name;
-    send_command(ipc, cmd.c_str());
+    send_command(fifo_in, fifo_out, cmd.c_str());
     update();
 }
 
@@ -180,6 +181,6 @@ void
 ServiceData::stop()
 {
     std::string cmd = "systemctl stop " + name;
-    send_command(ipc, cmd.c_str());
+    send_command(fifo_in, fifo_out, cmd.c_str());
     update();
 }

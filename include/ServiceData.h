@@ -13,7 +13,7 @@ enum class ServiceStatus {
 class ServiceData
 {
 public:
-    ServiceData(const char *ipc, std::string name);
+    ServiceData(const char* fifo_in, const char* fifo_out, std::string name);
     void update();
     ServiceStatus get_status();
     std::string get_name();
@@ -34,7 +34,8 @@ private:
     void set_enabled(bool enabled);
 
 private:
-    const char *ipc;
+    const char* fifo_in;
+    const char* fifo_out;
     bool enabled;
     ServiceStatus status;
     std::string name;

@@ -11,6 +11,8 @@ endif()
 
 if(CMAKE_BUILD_TYPE EQUAL "Debug")
     add_compile_options("$<BUILD_INTERFACE:-Wall;-ggdb>")
+else()
+    add_compile_options("$<BUILD_INTERFACE:-DNDEBUG=1>")
 endif()
 
 find_package(PkgConfig REQUIRED)

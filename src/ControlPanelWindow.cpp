@@ -16,13 +16,13 @@
 #include "SelectItemWindow.h"
 #include "ServiceData.h"
 #include "ServiceRow.h"
-#include "gdkmm/window.h"
 #include "utils.h"
 
-ControlPanelWindow::ControlPanelWindow(const char* _ipc, std::vector<std::string> init_list)
+ControlPanelWindow::ControlPanelWindow(const char* _fifo_in, const char* _fifo_out, std::vector<std::string> init_list)
     : window_selector(nullptr)
     , available_services(get_all_services())
-    , ipc(_ipc)
+    , fifo_in(_fifo_in)
+    , fifo_out(_fifo_out)
 {
     set_title("Systemd Control Panel");
     set_default_size(500, 300);
@@ -141,7 +141,7 @@ void
 ControlPanelWindow::add_service(std::string name)
 {
     available_services.erase(std::find(available_services.begin(), available_services.end(), name));
-    rows.push_back(std::make_unique<ServiceRow>(std::make_unique<ServiceData>(ipc, name)));
+    rows.push_back(std::make_unique<ServiceRow>(std::make_unique<ServiceData>(fifo_in, fifo_out, name)));
     auto& row = rows.back();
     row->get_data()->update();
     row->put(grid, rows.size());

@@ -18,7 +18,7 @@ class ControlPanelWindow
     : public Gtk::Window
 {
 public:
-    ControlPanelWindow(const char* ipc, std::vector<std::string> init_list);
+    ControlPanelWindow(const char* fifo_in, const char* fifo_out, std::vector<std::string> init_list);
     sigc::signal<void, std::vector<std::string>&>& signal_list_changed();
 
 private:
@@ -36,7 +36,8 @@ private:
     void trigger_list_changed();
 
 private:
-    const char* ipc;
+    const char* fifo_in;
+    const char* fifo_out;
     Gtk::Grid grid;
     std::vector<std::unique_ptr<ServiceRow>> rows;
 
