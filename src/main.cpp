@@ -70,7 +70,8 @@ monitor(const char* in, const char* out)
         for (const char* ch = buff; *ch; ch++) {
             if (!(*ch >= '0' && *ch <= '9'
             || *ch >= 'A' && *ch <= 'Z'
-            || *ch >= 'a' && *ch <= 'z')) {
+            || *ch >= 'a' && *ch <= 'z')
+            || *ch == '.' || *ch == '-') {
                 return 1;
             }
         }
