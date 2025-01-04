@@ -156,31 +156,27 @@ ServiceData::signal_enabled_changed()
 void
 ServiceData::enable()
 {
-    std::string cmd = "systemctl enable " + name;
-    send_command(fifo_in, fifo_out, cmd.c_str());
+    send_command(fifo_in, fifo_out, MessageCode::enable, name.c_str());
     update();
 }
 
 void
 ServiceData::disable()
 {
-    std::string cmd = "systemctl disable " + name;
-    send_command(fifo_in, fifo_out, cmd.c_str());
+    send_command(fifo_in, fifo_out, MessageCode::disable, name.c_str());
     update();
 }
 
 void
 ServiceData::start()
 {
-    std::string cmd = "systemctl start " + name;
-    send_command(fifo_in, fifo_out, cmd.c_str());
+    send_command(fifo_in, fifo_out, MessageCode::start, name.c_str());
     update();
 }
 
 void
 ServiceData::stop()
 {
-    std::string cmd = "systemctl stop " + name;
-    send_command(fifo_in, fifo_out, cmd.c_str());
+    send_command(fifo_in, fifo_out, MessageCode::stop, name.c_str());
     update();
 }

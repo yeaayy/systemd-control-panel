@@ -42,42 +42,43 @@ get_all_services()
 }
 
 int
-send_command(const char* in, const char* out, const char* cmd)
+send_command(const char* in, const char* out, MessageCode code, const char* service)
 {
     FILE* file;
-    char buff[BUFSIZ], *result;
-    int len = strlen(cmd);
+    int len = strlen(service);
+    if (len > 255) return 0;
 
     for (;;) {
-        file = fopen(out, "w");
+        file = fopen(out, "wb");
         if (!file) return 0;
 
-        fwrite(cmd, len, 1, file);
-        fputc('\n', file);
+        fputc(static_cast<int>(code), file);
+        fputc(len, file);
+        fwrite(service, len, 1, file);
         fclose(file);
 
-        file = fopen(in, "r");
+        file = fopen(in, "rb");
         if (!file) return 0;
 
-        result = fgets(buff, BUFSIZ, file);
-        if (!result) return 0;
+        int reply = fgetc(file);
         fclose(file);
 
-        if (strcmp(result, "done\n") == 0) {
+        if (reply == -1) return 0;
+        if (static_cast<MessageCode>(reply) == MessageCode::done) {
             return 1;
         }
     }
 }
 
 void
-send_message(const char *target, const char* msg)
+send_message(const char* target, MessageCode code)
 {
-    FILE* file = fopen(target, "w");
+    FILE* file = fopen(target, "wb");
     if (!file) {
-        std::cerr << "Failed to send \"" << msg << "\"\n";
+        std::cerr << "Failed to send code " << static_cast<int>(code) << "\n";
         return;
     }
 
-    fwrite(msg, strlen(msg), 1, file);
+    fputc(static_cast<int>(code), file);
     fclose(file);
 }

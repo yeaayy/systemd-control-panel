@@ -1,6 +1,5 @@
 #include "ControlPanelWindow.h"
 
-#include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -8,9 +7,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <chrono>
 #include <future>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include <glibmm/error.h>
@@ -19,7 +20,6 @@
 #include <glibmm/optiongroup.h>
 
 #include "constant.h"
-#include "glib.h"
 #include "utils.h"
 
 int
@@ -31,28 +31,68 @@ monitor(const char* in, const char* out)
     }
 
     FILE* file;
-    char buff[BUFSIZ];
+    int len;
+    char buff[256];
 
-    send_message(out, "start\n");
+    send_message(out, MessageCode::begin);
 
     while (true) {
-        file = fopen(in, "r");
+        file = fopen(in, "rb");
         if (!file) return 0;
-        char *cmd = fgets(buff, BUFSIZ, file);
+
+        const char* action;
+        switch (static_cast<MessageCode>(fgetc(file))) {
+            case MessageCode::exit:
+                return 0;
+            case MessageCode::start:
+                action = "start";
+                break;
+            case MessageCode::stop:
+                action = "stop";
+                break;
+            case MessageCode::enable:
+                action = "enable";
+                break;
+            case MessageCode::disable:
+                action = "disable";
+                break;
+            default:
+                return 1;
+        }
+        len = fgetc(file);
+        if (fread(buff, 1, len, file) != len) {
+            return 1;
+        }
+        buff[len] = '\0';
         fclose(file);
 
+        // Check if service contain valid service name
+        for (const char* ch = buff; *ch; ch++) {
+            if (!(*ch >= '0' && *ch <= '9'
+            || *ch >= 'A' && *ch <= 'Z'
+            || *ch >= 'a' && *ch <= 'z')) {
+                return 1;
+            }
+        }
+
+        std::string cmd = std::string("systemctl ") + action + " " + buff;
 #ifndef NDEBUG
-        std::cout << "Running: " << cmd;
+        std::cout << "Running: " << cmd << std::endl;
 #endif
-        if (strcmp(cmd, "exit\n") == 0) return 0;
-        system(cmd);
-        send_message(out, "done\n");
+        system(cmd.c_str());
+        send_message(out, MessageCode::done);
     }
-    return 0;
 }
 
 void
-run_monitor(int argc, char** argv, const char* in, const char* out, std::promise<bool>* promise)
+run_monitor(
+    int argc,
+    char** argv,
+    const char* in,
+    const char* out,
+    std::promise<bool>* monitor_started,
+    std::promise<bool>* monitor_ended,
+    std::future<ControlPanelWindow*>* window_result)
 {
     std::stringstream ss;
     ss << "pkexec " << argv[0] << " monitor " << in << " " << out;
@@ -61,22 +101,27 @@ run_monitor(int argc, char** argv, const char* in, const char* out, std::promise
     }
     std::string cmd = ss.str();
     int result = system(cmd.c_str());
-    if (result) {
-        promise->set_value(false);
+    if (result == 256 || result == 0) {
+        monitor_ended->set_value(true);
+        auto window = window_result->get();
+        if (window->gobj()) {
+            window->close();
+        }
+    } else if (result) {
+        monitor_started->set_value(false);
     }
 }
 
 void
-wait_monitor_started(const char* target, std::promise<bool>* promise)
+wait_monitor_started(const char* target, std::promise<bool>* monitor_started)
 {
-    char buff[BUFSIZ];
-    FILE* file = fopen(target, "r");
+    FILE* file = fopen(target, "rb");
     if (!file) return;
-    char* cmd = fgets(buff, BUFSIZ, file);
+    auto code = static_cast<MessageCode>(fgetc(file));
     fclose(file);
 
-    if (strcmp(cmd, "start\n") == 0) {
-        promise->set_value(true);
+    if (code == MessageCode::begin) {
+        monitor_started->set_value(true);
     }
 }
 
@@ -156,22 +201,30 @@ main(int argc, char *argv[])
         return 1;
     }
 
-    std::promise<bool> promise;
-    auto future = promise.get_future();
-    std::thread monitor_thread(run_monitor, argc, argv, c_fifo2, c_fifo1, &promise);
-    std::thread wait_monitor(wait_monitor_started, c_fifo1, &promise);
+    std::promise<bool> monitor_started_promise;
+    std::promise<bool> monitor_ended_promise;
+    std::promise<ControlPanelWindow*> window_promise;
+    auto monitor_started = monitor_started_promise.get_future();
+    auto monitor_ended = monitor_ended_promise.get_future();
+    auto window_result = window_promise.get_future();
+    std::thread monitor_thread(run_monitor, argc, argv, c_fifo2, c_fifo1, &monitor_started_promise, &monitor_ended_promise, &window_result);
+    std::thread wait_monitor(wait_monitor_started, c_fifo1, &monitor_started_promise);
 
-    future.wait();
+    monitor_started.wait();
     int result = 1;
-    if (future.get()) {
+    if (monitor_started.get()) {
         auto app = Gtk::Application::create(argc, argv, APP_ID);
-        ControlPanelWindow win(fifo1.c_str(), fifo2.c_str(), read_service_list(config_path));
+        ControlPanelWindow win(c_fifo1, c_fifo2, read_service_list(config_path));
         win.signal_list_changed().connect(
             sigc::bind(sigc::ptr_fun(write_service_list), config_path));
+        window_promise.set_value(&win);
         result = app->run(win);
-        send_message(c_fifo2, "exit\n");
+
+        if (monitor_ended.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout) {
+            send_message(c_fifo2, MessageCode::exit);
+        }
     } else {
-        send_message(c_fifo1, "no_perm");
+        send_message(c_fifo1, MessageCode::exit);
     }
     wait_monitor.join();
     monitor_thread.join();
